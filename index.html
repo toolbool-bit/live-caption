@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Luxe Cam — Live Subtitles & Translator</title>
+<style>
+:root{--bg:#f4f1ec;--fg:#1b1814;--card:#fff;--line:#ded8cc;--gold:#a8842c;--mut:#6b645a;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f0e0c;--fg:#f3ece0;--card:#1a1815;--line:#33302a;--gold:#d4af37;--mut:#a39b8c}}
+:root[data-theme="dark"]{--bg:#0f0e0c;--fg:#f3ece0;--card:#1a1815;--line:#33302a;--gold:#d4af37;--mut:#a39b8c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:18px}
+h1{font:600 22px Georgia,"Times New Roman",serif;margin:0 0 2px;color:var(--gold);letter-spacing:.02em}
+.sub{color:var(--mut);margin:0 0 14px;font-size:13px}
+.stage{background:#000;border:1px solid var(--line);border-radius:12px;overflow:hidden}
+canvas{display:block;width:100%;height:auto}
+.panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-top:12px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mut);gap:4px}
+select,input[type=range]{width:100%;font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px}
+input[type=range]{padding:0}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+button{font:600 14px inherit;font-family:inherit;border:1px solid var(--gold);background:var(--gold);color:#16120a;border-radius:9px;padding:9px 16px;cursor:pointer}
+button.alt{background:transparent;color:var(--gold)}
+#status{font-size:13px;color:var(--mut)}
+.help{margin-top:14px;font-size:13px;color:var(--mut)}
+.help b{color:var(--fg)}
+body.clean .ui{display:none}
+body.clean .wrap{padding:0;max-width:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+ <div class="ui"><h1>Luxe Cam</h1><p class="sub">Live subtitles, instant translation, and a penthouse desk behind you.</p></div>
+ <div class="stage"><canvas id="cv" width="1280" height="720"></canvas></div>
+ <div class="ui">
+  <div class="row"><button id="go">Start camera &amp; mic</button><button class="alt" id="clean">Clean view (fullscreen)</button><span id="status">Press start and allow camera + mic.</span></div>
+  <div class="panel">
+   <label>Background<select id="bg"></select></label>
+   <label>I speak<select id="src"></select></label>
+   <label>Show subtitles in<select id="dst"></select></label>
+   <label>Caption style<select id="mode"><option value="tr">Translation only</option><option value="both">Translation + original</option><option value="orig">Original only</option></select></label>
+   <label>Frame width<input type="range" id="fw" min="35" max="80" value="52"></label>
+   <label>Mirror me<select id="mir"><option value="1">On</option><option value="0">Off</option></select></label>
+  </div>
+  <p class="help"><b>Use it on a stranger site:</b> open this page in Chrome, then in OBS add a <b>Window Capture</b> of this window (use Clean view and crop to the picture), press <b>Start Virtual Camera</b>, and choose “OBS Virtual Camera” as your camera on the chat site. Your voice is captioned live, so they read you in their language.<br>
+  Speech recognition and translation run in Chrome or Edge on desktop. The translation language pack downloads once. There’s no AI cut-out of you here, so sit centered with a plain wall behind you and the soft frame blends you into the room.</p>
+ </div>
+</div>
+<script>
+const W=1280,H=720,DESK=585;
+const cv=document.getElementById("cv"),ctx=cv.getContext("2d");
+const $=id=>document.getElementById(id);
+const LANGS=[["en","en-US","English"],["ar","ar-EG","Arabic"],["es","es-ES","Spanish"],["fr","fr-FR","French"],["de","de-DE","German"],["it","it-IT","Italian"],["pt","pt-BR","Portuguese"],["ru","ru-RU","Russian"],["tr","tr-TR","Turkish"],["hi","hi-IN","Hindi"],["ja","ja-JP","Japanese"],["ko","ko-KR","Korean"],["zh","zh-CN","Chinese"]];
+LANGS.forEach(l=>{$("src").add(new Option(l[2],l[1]));$("dst").add(new Option(l[2],l[0]))});
+$("src").value="ar-EG";$("dst").value="en";
+
+const PAL={
+ "Penthouse Night":{w1:"#14161f",w2:"#262c3f",s1:"#0b1026",s2:"#2e3566",b:"#0a0d1c",lit:1,lc:"#ffd98a",acc:"#d4af37",sh:"#1b1d29",bk:["#5b2333","#1f3b5c","#3a3a3a","#6b4a1f","#2a4d3a"],glow:"#ffcf70",wood:["#4a2c1a","#2a170c"]},
+ "Gold Study":{w1:"#2a1d12",w2:"#4a3320",s1:"#f4a261",s2:"#5b3a29",b:"#2b1a12",lit:0,lc:"",acc:"#e6c068",sh:"#33220f",bk:["#7a2e2e","#2f4a2f","#8a6a2a","#3a2a1a","#5a3a5a"],glow:"#ffd28a",wood:["#3c2212","#22110a"]},
+ "Marble Loft":{w1:"#d9d6d0",w2:"#f2efe9",s1:"#9ec9ee",s2:"#e8f3fb",b:"#8c97a3",lit:0,lc:"",acc:"#b08d3c",sh:"#e6e1d6",bk:["#44546a","#a35b4a","#2f2f2f","#7a8a6a","#c9a45c"],glow:"#fff1c9",wood:["#6a4630","#3a2417"]},
+ "Emerald Library":{w1:"#0e2a22",w2:"#1b4a3b",s1:"#08181f",s2:"#1d4046",b:"#06100f",lit:1,lc:"#e6ffd0",acc:"#d4af37",sh:"#102f26",bk:["#6a1f2a","#c9a45c","#2a3a5a","#4a4a2a","#3a1f4a"],glow:"#ffe9a8",wood:["#35200f","#1c0f08"]},
+ "Sunset Skyline":{w1:"#2b1b2e",w2:"#5a2e4a",s1:"#ff8a5c",s2:"#6a3d7a",b:"#2a1530",lit:1,lc:"#ffe0a0",acc:"#ffd27a",sh:"#3a2038",bk:["#8a3a4a","#3a2a5a","#c98a4a","#2a2a3a","#5a3a2a"],glow:"#ffb070",wood:["#40251a","#24130c"]}
+};
+Object.keys(PAL).forEach(k=>$("bg").add(new Option(k,k)));
+
+function mk(){const c=document.createElement("canvas");c.width=W;c.height=H;return c}
+function lg(g,x0,y0,x1,y1,a,b){const r=g.createLinearGradient(x0,y0,x1,y1);r.addColorStop(0,a);r.addColorStop(1,b);return r}
+
+function buildBack(p){
+ const c=mk(),g=c.getContext("2d");
+ g.fillStyle=lg(g,0,0,0,H,p.w1,p.w2);g.fillRect(0,0,W,H);
+ g.strokeStyle=p.acc+"33";g.lineWidth=2;
+ for(let x=0;x<W;x+=160)g.strokeRect(x+10,30,140,540);
+ const wx=60,wy=60,ww=380,wh=470;
+ g.fillStyle=lg(g,0,wy,0,wy+wh,p.s1,p.s2);g.fillRect(wx,wy,ww,wh);
+ let seed=7;const rnd=()=>(seed=(seed*16807)%2147483647)/2147483647;
+ g.save();g.beginPath();g.rect(wx,wy,ww,wh);g.clip();
+ for(let x=wx;x<wx+ww;x+=34){
+  const h=80+rnd()*240;g.fillStyle=p.b;g.fillRect(x,wy+wh-h,30,h);
+  if(p.lit)for(let y=wy+wh-h+8;y<wy+wh-6;y+=14)for(let k=4;k<26;k+=9)if(rnd()>.55){g.fillStyle=p.lc;g.fillRect(x+k,y,4,6)}
+ }
+ g.restore();
+ g.strokeStyle=p.acc;g.lineWidth=8;g.strokeRect(wx,wy,ww,wh);
+ g.lineWidth=4;g.beginPath();g.moveTo(wx+ww/2,wy);g.lineTo(wx+ww/2,wy+wh);g.moveTo(wx,wy+wh/2);g.lineTo(wx+ww,wy+wh/2);g.stroke();
+ const sx=900,sw=320;
+ g.fillStyle=p.sh;g.fillRect(sx,70,sw,470);
+ for(let r=0;r<4;r++){
+  const y=70+r*118;let x=sx+12;
+  while(x<sx+sw-30){const bw=14+rnd()*16,bh=60+rnd()*40;g.fillStyle=p.bk[Math.floor(rnd()*p.bk.length)];g.fillRect(x,y+112-bh,bw,bh);x+=bw+2}
+  g.fillStyle=p.acc;g.fillRect(sx,y+112,sw,6);
+ }
+ g.strokeStyle=p.acc;g.lineWidth=6;g.strokeRect(sx,70,sw,470);
+ const rg=g.createRadialGradient(640,60,10,640,220,440);rg.addColorStop(0,p.glow+"aa");rg.addColorStop(1,p.glow+"00");
+ g.fillStyle=rg;g.fillRect(0,0,W,H);
+ g.strokeStyle=p.acc;g.lineWidth=3;g.beginPath();g.moveTo(640,0);g.lineTo(640,50);g.stroke();
+ g.fillStyle=p.acc;g.beginPath();g.moveTo(600,95);g.lineTo(680,95);g.lineTo(660,50);g.lineTo(620,50);g.fill();
+ return c;
+}
+function buildDesk(p){
+ const c=mk(),g=c.getContext("2d");
+ g.fillStyle=lg(g,0,DESK,0,H,p.wood[0],p.wood[1]);g.fillRect(0,DESK,W,H-DESK);
+ g.fillStyle=lg(g,0,DESK,0,DESK+40,"rgba(255,255,255,.22)","rgba(255,255,255,0)");g.fillRect(0,DESK,W,40);
+ g.strokeStyle="rgba(0,0,0,.18)";g.lineWidth=1;
+ for(let i=0;i<26;i++){const y=DESK+8+i*5.2;g.beginPath();g.moveTo(0,y);g.bezierCurveTo(300,y+3,700,y-3,W,y+2);g.stroke()}
+ g.fillStyle=p.acc;g.fillRect(0,DESK,W,3);
+ // lamp
+ g.fillStyle=p.acc;g.beginPath();g.ellipse(170,602,36,8,0,0,7);g.fill();
+ g.strokeStyle=p.acc;g.lineWidth=5;g.beginPath();g.moveTo(170,600);g.lineTo(190,500);g.lineTo(215,470);g.stroke();
+ const lgr=g.createRadialGradient(225,490,5,225,520,150);lgr.addColorStop(0,p.glow+"88");lgr.addColorStop(1,p.glow+"00");
+ g.fillStyle=lgr;g.fillRect(60,380,330,220);
+ g.fillStyle="#1f5a46";g.beginPath();g.moveTo(190,470);g.lineTo(262,470);g.lineTo(245,500);g.lineTo(207,500);g.fill();
+ // books
+ [["#6a1f2a",1040,572,120],["#1f3b5c",1048,558,106],["#2a2a2a",1036,544,128]].forEach(b=>{g.fillStyle=b[0];g.fillRect(b[1],b[2],b[3],14);g.fillStyle=p.acc;g.fillRect(b[1],b[2]+6,b[3],2)});
+ // tumbler
+ g.fillStyle="rgba(255,255,255,.18)";g.fillRect(1190,540,40,50);
+ g.fillStyle="rgba(214,140,40,.8)";g.fillRect(1192,562,36,26);
+ g.fillStyle="rgba(255,255,255,.4)";g.fillRect(1194,542,4,44);
+ return c;
+}
+let back,deskL,vmask,bw=0,bh=640;
+function setBG(){const p=PAL[$("bg").value];back=buildBack(p);deskL=buildDesk(p)}
+function buildMask(){
+ bw=Math.round(W*$("fw").value/100);
+ vmask=document.createElement("canvas");vmask.width=bw;vmask.height=bh;
+ const g=vmask.getContext("2d");g.filter="blur(28px)";g.fillStyle="#fff";
+ g.beginPath();g.roundRect(40,40,bw-80,bh+60,60);g.fill();
+}
+$("bg").onchange=setBG;$("fw").oninput=buildMask;
+$("bg").value="Penthouse Night";setBG();buildMask();
+
+// ---- camera + captions
+const vid=document.createElement("video");vid.muted=true;vid.playsInline=true;
+const vc=document.createElement("canvas");const vg=vc.getContext("2d");
+let running=false,rec=null,translator=null,cur={orig:"",tr:"",t:0},busy=false;
+const status=t=>$("status").textContent=t;
+
+async function setupTranslator(){
+ translator=null;
+ const s=$("src").value.split("-")[0],d=$("dst").value;
+ if(s===d)return;
+ if(!("Translator" in self)){status("Translation needs Chrome 138+ on desktop — showing original captions.");return}
+ try{
+  const av=await Translator.availability({sourceLanguage:s,targetLanguage:d});
+  if(av==="unavailable"){status("This language pair isn’t available on your browser.");return}
+  translator=await Translator.create({sourceLanguage:s,targetLanguage:d,monitor(m){m.addEventListener("downloadprogress",e=>status("Downloading language pack "+Math.round(e.loaded*100)+"%"))}});
+  status("Live. Speak and your captions appear.");
+ }catch(e){status("Translator error: "+(e.message||e))}
+}
+async function doTr(text){
+ if(!translator||busy)return;busy=true;
+ try{const v=await translator.translate(text);if(cur.orig===text||!cur.tr)cur.tr=v}catch(e){}
+ busy=false;if(cur.orig!==text)doTr(cur.orig);
+}
+function startRec(){
+ const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+ if(!SR){status("Speech recognition needs Chrome or Edge.");return}
+ if(rec){rec.onend=null;try{rec.stop()}catch(e){}}
+ rec=new SR();rec.continuous=true;rec.interimResults=true;rec.lang=$("src").value;
+ rec.onresult=e=>{
+  let txt="";for(let i=e.resultIndex;i<e.results.length;i++)txt+=e.results[i][0].transcript;
+  txt=txt.trim();if(!txt)return;
+  cur.orig=txt;cur.t=performance.now();doTr(txt);
+ };
+ rec.onerror=e=>{if(e.error!=="no-speech")status("Mic: "+e.error)};
+ rec.onend=()=>{if(running)try{rec.start()}catch(e){}};
+ try{rec.start()}catch(e){}
+}
+$("go").onclick=async()=>{
+ try{
+  const st=await navigator.mediaDevices.getUserMedia({video:{width:1280,height:720},audio:true});
+  vid.srcObject=st;await vid.play();running=true;
+  $("go").textContent="Restart";
+  await setupTranslator();startRec();
+ }catch(e){status("Couldn’t start: "+(e.message||e)+" — if blocked, open this page in its own tab.")}
+};
+const relang=async()=>{if(running){cur={orig:"",tr:"",t:0};await setupTranslator();startRec()}};
+$("src").onchange=relang;$("dst").onchange=relang;
+$("clean").onclick=()=>{
+ document.body.classList.add("clean");
+ (document.fullscreenElement?Promise.resolve():document.documentElement.requestFullscreen()).catch(()=>{});
+};
+document.addEventListener("fullscreenchange",()=>{if(!document.fullscreenElement)document.body.classList.remove("clean")});
+
+function wrap(g,t,max){
+ const rtl=/[\u0590-\u08FF]/.test(t),words=t.split(/\s+/),lines=[];let l="";
+ for(const w of words){const n=l?l+" "+w:w;if(g.measureText(n).width>max&&l){lines.push(l);l=w}else l=n}
+ if(l)lines.push(l);return lines.slice(-2);
+}
+function caption(){
+ if(!cur.orig||performance.now()-cur.t>7000)return;
+ const m=$("mode").value;
+ let main=cur.orig,small="";
+ if(translator&&cur.tr){
+  if(m==="tr")main=cur.tr;else if(m==="both"){main=cur.tr;small=cur.orig}
+ }
+ const g=ctx;g.textAlign="center";g.textBaseline="alphabetic";
+ g.font="600 36px system-ui,sans-serif";
+ const ml=wrap(g,main,1040);
+ g.font="400 22px system-ui,sans-serif";
+ const sl=small?wrap(g,small,1040).slice(-1):[];
+ const h=ml.length*44+sl.length*30+26,y0=H-24-h;
+ g.fillStyle="rgba(8,7,5,.72)";g.beginPath();g.roundRect(100,y0,1080,h,16);g.fill();
+ g.strokeStyle="rgba(212,175,55,.7)";g.lineWidth=2;g.stroke();
+ let y=y0+16;
+ g.fillStyle="#d9c99a";g.font="400 22px system-ui,sans-serif";
+ sl.forEach(s=>{y+=24;g.fillText(s,W/2,y);y+=6});
+ g.fillStyle="#fff";g.font="600 36px system-ui,sans-serif";
+ ml.forEach(s=>{y+=36;g.fillText(s,W/2,y);y+=8});
+}
+function draw(){
+ ctx.drawImage(back,0,0);
+ const bx=(W-bw)/2,by=40;
+ if(running&&vid.videoWidth){
+  vc.width=bw;vc.height=bh;
+  const s=Math.max(bw/vid.videoWidth,bh/vid.videoHeight),dw=vid.videoWidth*s,dh=vid.videoHeight*s;
+  vg.save();vg.filter="contrast(1.06) saturate(1.1) sepia(.1)";
+  if($("mir").value==="1"){vg.translate(bw,0);vg.scale(-1,1)}
+  vg.drawImage(vid,(bw-dw)/2,(bh-dh)/2,dw,dh);vg.restore();
+  vg.globalCompositeOperation="destination-in";vg.drawImage(vmask,0,0);vg.globalCompositeOperation="source-over";
+  ctx.drawImage(vc,bx,by);
+ }else{
+  ctx.fillStyle="rgba(255,255,255,.75)";ctx.font="600 30px Georgia,serif";ctx.textAlign="center";
+  ctx.fillText("Press “Start camera & mic”",W/2,300);
+ }
+ ctx.drawImage(deskL,0,0);
+ caption();
+ requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
